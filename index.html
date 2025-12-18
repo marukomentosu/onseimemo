@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Voice & Text Recorder</title>
+    <title>High-Gain Voice Recorder</title>
     <style>
         :root {
             --primary: #007aff;
             --danger: #ff3b30;
             --secondary: #8e8e93;
-            --success: #34c759;
             --bg: #f2f2f7;
             --card: #ffffff;
             --text: #1c1c1e;
@@ -81,32 +80,25 @@
             font-weight: 600;
             font-size: 1rem;
             cursor: pointer;
-            transition: transform 0.1s, opacity 0.2s;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
         }
-        button:active { transform: scale(0.98); opacity: 0.8; }
         #start-btn { background: var(--primary); color: white; grid-column: span 2; }
         #stop-btn { background: var(--danger); color: white; display: none; grid-column: span 2; }
         #copy-btn { background: var(--secondary); color: white; }
         #clear-btn { background: var(--secondary); color: white; opacity: 0.6; }
-        .audio-info {
-            text-align: center;
-            font-size: 0.8rem;
-            color: var(--secondary);
-            margin-top: 5px;
-        }
+        .info { font-size: 0.75rem; color: var(--secondary); text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div class="app-container">
     <div class="header">
-        <h1>Voice & Text</h1>
+        <h1>High-Gain Recorder</h1>
         <div id="status-badge">待機中</div>
-        <div class="audio-info">※停止時に音声保存を確認します</div>
+        <div class="info">高感度マイク設定済み / .mp4保存対応</div>
     </div>
 
     <div class="text-card">
@@ -114,9 +106,9 @@
     </div>
 
     <div class="controls">
-        <button id="start-btn">🎙 録音と解析を開始</button>
-        <button id="stop-btn">🛑 停止して保存確認</button>
-        <button id="copy-btn">📋 テキストコピー</button>
+        <button id="start-btn">🎙 録音開始（高感度）</button>
+        <button id="stop-btn">🛑 停止して保存</button>
+        <button id="copy-btn">📋 コピー</button>
         <button id="clear-btn">🗑 消去</button>
     </div>
 </div>
@@ -133,96 +125,105 @@
     let audioChunks = [];
     let isRecording = false;
     let finalTranscript = '';
+    let audioContext;
+    let streamSource;
+    let gainNode;
+    let destination;
 
-    // 初期化関数
     const initRecognition = () => {
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         recognition.continuous = true;
-
-        recognition.onresult = (event) => {
-            let interimTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript + '\n';
-                } else {
-                    interimTranscript += event.results[i][0].transcript;
-                }
+        recognition.onresult = (e) => {
+            let interim = '';
+            for (let i = e.resultIndex; i < e.results.length; ++i) {
+                if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript + '\n';
+                else interim += e.results[i][0].transcript;
             }
-            resultArea.value = finalTranscript + interimTranscript;
+            resultArea.value = finalTranscript + interim;
             resultArea.scrollTop = resultArea.scrollHeight;
         };
-
-        recognition.onend = () => {
-            if (isRecording) recognition.start(); // モバイルでの意図せぬ停止を防ぐ
-        };
+        recognition.onend = () => { if (isRecording) recognition.start(); };
     };
 
-    // 録音開始
-    async function startAll() {
+    async function startRecording() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // マイク入力を取得（ノイズ抑制等をオン）
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { 
+                    echoCancellation: true, 
+                    noiseSuppression: true, 
+                    autoGainControl: true 
+                } 
+            });
+
+            // --- Web Audio API で小さい音を増幅 ---
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            streamSource = audioContext.createMediaStreamSource(stream);
+            gainNode = audioContext.createGain();
             
-            // 1. 音声データの録音設定
-            mediaRecorder = new MediaRecorder(stream);
+            // ゲイン値を設定 (2.5倍に増幅)
+            gainNode.gain.value = 2.5; 
+            
+            // 録音用の宛先を作成
+            destination = audioContext.createMediaStreamDestination();
+            streamSource.connect(gainNode);
+            gainNode.connect(destination);
+            // --------------------------------------
+
+            // iOS/Safariで最も汎用性の高いaudio/mp4形式を指定
+            const mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/webm';
+            mediaRecorder = new MediaRecorder(destination.stream, { mimeType });
+            
             audioChunks = [];
             mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
             mediaRecorder.onstop = () => {
-                if (confirm("音声データをファイルとして保存しますか？")) {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    const url = URL.createObjectURL(audioBlob);
+                if (confirm("音声データ(.mp4)を保存しますか？")) {
+                    const blob = new Blob(audioChunks, { type: mimeType });
+                    const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const time = new Date().toLocaleTimeString().replace(/:/g, '-');
                     a.href = url;
-                    a.download = `voice_${timestamp}.webm`;
+                    a.download = `voice_note_${time}.mp4`;
                     a.click();
                 }
-                stream.getTracks().forEach(track => track.stop()); // マイクをオフにする
+                stream.getTracks().forEach(t => t.stop());
+                audioContext.close();
             };
 
-            // 2. 文字起こしの開始
             if (!recognition) initRecognition();
             isRecording = true;
             recognition.start();
             mediaRecorder.start();
 
-            // UI更新
-            statusBadge.innerText = "録音中 (音声・文字)";
+            statusBadge.innerText = "高感度モード録音中";
             statusBadge.style.background = "#ff3b30";
             startBtn.style.display = 'none';
             stopBtn.style.display = 'flex';
         } catch (err) {
-            alert("マイクの使用が許可されていないか、対応していません: " + err);
+            alert("エラー: " + err);
         }
     }
 
-    // 録音停止
-    function stopAll() {
+    function stopRecording() {
         isRecording = false;
         recognition.stop();
         mediaRecorder.stop();
-        
         statusBadge.innerText = "待機中";
         statusBadge.style.background = "#8e8e93";
         startBtn.style.display = 'flex';
         stopBtn.style.display = 'none';
     }
 
-    startBtn.onclick = startAll;
-    stopBtn.onclick = stopAll;
-
+    startBtn.onclick = startRecording;
+    stopBtn.onclick = stopRecording;
     document.getElementById('copy-btn').onclick = () => {
-        navigator.clipboard.writeText(resultArea.value).then(() => {
-            alert("テキストをコピーしました");
-        });
+        navigator.clipboard.writeText(resultArea.value);
+        alert("コピー完了");
     };
-
     document.getElementById('clear-btn').onclick = () => {
-        if(confirm("内容を消去しますか？")) {
-            finalTranscript = '';
-            resultArea.value = '';
-        }
+        if(confirm("消去しますか？")) { finalTranscript = ''; resultArea.value = ''; }
     };
 </script>
 
