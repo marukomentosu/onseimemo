@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pro Visual Recorder - OnePage</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Fixed Visual Recorder</title>
     <style>
         :root {
             --primary: #007aff;
@@ -24,57 +24,60 @@
             background-color: var(--bg);
             color: var(--text);
             margin: 0;
-            height: 100vh;
+            /* 100dvh = ツールバーを除いた実際の表示領域の高さ */
+            height: 100dvh;
             display: flex;
             justify-content: center;
-            overflow: hidden; /* スクロールを禁止して1画面に固定 */
+            overflow: hidden;
         }
 
         .app-container {
             width: 100%;
             max-width: 500px;
-            padding: 10px;
+            padding: 8px; /* パディングをさらに縮小 */
             display: flex;
             flex-direction: column;
-            height: 100%; /* 全高を使用 */
-            gap: 8px;
+            height: 100%;
+            gap: 6px;
         }
 
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 0 5px; }
-        h1 { font-size: 1.2rem; margin: 0; }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        h1 { font-size: 1rem; margin: 0; }
         #status-badge {
-            padding: 2px 10px;
-            border-radius: 10px;
-            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 10px;
             background: var(--secondary);
             color: white;
         }
 
         .visualizer-container {
             background: #000;
-            border-radius: 10px;
-            height: 60px; /* 高さを抑える */
+            border-radius: 8px;
+            height: 45px; /* 高さをさらに圧縮 */
             flex-shrink: 0;
         }
         canvas { width: 100%; height: 100%; display: block; }
         
         .gain-control {
             background: var(--card);
-            padding: 8px 12px;
-            border-radius: 10px;
+            padding: 6px 10px;
+            border-radius: 8px;
             flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        .gain-info { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px; }
-        input[type=range] { width: 100%; margin: 0; cursor: pointer; }
+        .gain-info { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px; }
+        input[type=range] { width: 100%; margin: 0; height: 20px; cursor: pointer; }
 
         .text-card {
             background: var(--card);
-            border-radius: 12px;
-            padding: 10px;
-            flex-grow: 1; /* 余ったスペースをすべてテキストエリアに割り当て */
+            border-radius: 10px;
+            padding: 8px;
+            flex-grow: 1; /* ここが伸び縮みして画面に収める */
             display: flex;
             flex-direction: column;
-            min-height: 0; /* flex内のスクロールを有効にするための魔法 */
+            min-height: 0; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         #result-area {
             width: 100%;
@@ -83,41 +86,41 @@
             outline: none;
             background: transparent;
             color: var(--text);
-            font-size: 1rem;
-            line-height: 1.5;
+            font-size: 0.95rem;
+            line-height: 1.4;
             resize: none;
         }
 
         .controls { 
             display: grid; 
             grid-template-columns: repeat(2, 1fr); 
-            gap: 8px; 
+            gap: 6px; 
             flex-shrink: 0;
-            padding-bottom: env(safe-area-inset-bottom); /* iPhoneのバー対策 */
+            padding-bottom: env(safe-area-inset-bottom); /* iPhone下部の余白対策 */
         }
         button {
-            padding: 12px;
+            padding: 10px; /* ボタンの高さを調整 */
             border: none;
-            border-radius: 10px;
+            border-radius: 8px;
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 5px;
+            gap: 4px;
         }
         #start-btn { background: var(--primary); color: white; grid-column: span 2; }
         #stop-btn { background: var(--danger); color: white; display: none; grid-column: span 2; }
         #copy-btn { background: var(--secondary); color: white; }
-        #clear-btn { background: var(--secondary); color: white; opacity: 0.6; }
+        #clear-btn { background: var(--secondary); color: white; opacity: 0.7; }
     </style>
 </head>
 <body>
 
 <div class="app-container">
     <div class="header">
-        <h1>Visual Transcriber</h1>
+        <h1>Voice Transcriber</h1>
         <div id="status-badge">待機中</div>
     </div>
 
@@ -134,7 +137,7 @@
     </div>
 
     <div class="text-card">
-        <textarea id="result-area" placeholder="文字起こし結果..." readonly></textarea>
+        <textarea id="result-area" placeholder="ここに結果が表示されます..." readonly></textarea>
     </div>
 
     <div class="controls">
@@ -146,6 +149,8 @@
 </div>
 
 <script>
+    // ※ JavaScriptロジックは前回と同様ですが、
+    // dynamic viewportへの対応とcanvasの初期化のみ調整
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const resultArea = document.getElementById('result-area');
     const statusBadge = document.getElementById('status-badge');
@@ -158,6 +163,14 @@
 
     let recognition, mediaRecorder, audioChunks = [], isRecording = false, finalTranscript = '';
     let audioContext, analyser, gainNode, animationId;
+
+    // Canvasの解像度合わせ
+    function resizeCanvas() {
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
     gainSlider.oninput = () => {
         const val = gainSlider.value;
@@ -260,8 +273,8 @@
         statusBadge.innerText = "待機中";
         statusBadge.style.background = "#8e8e93";
     };
-    document.getElementById('copy-btn').onclick = () => { navigator.clipboard.writeText(resultArea.value); alert("コピー完了"); };
-    document.getElementById('clear-btn').onclick = () => { if(confirm("消去？")) { finalTranscript = ''; resultArea.value = ''; } };
+    document.getElementById('copy-btn').onclick = () => { navigator.clipboard.writeText(resultArea.value); alert("コピーしました"); };
+    document.getElementById('clear-btn').onclick = () => { if(confirm("消去しますか？")) { finalTranscript = ''; resultArea.value = ''; } };
 </script>
 </body>
 </html>
