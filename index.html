@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>High-Gain Voice Recorder</title>
+    <title>Pro Visual Recorder</title>
     <style>
         :root {
             --primary: #007aff;
@@ -14,12 +14,7 @@
             --text: #1c1c1e;
         }
         @media (prefers-color-scheme: dark) {
-            :root {
-                --bg: #000000;
-                --card: #1c1c1e;
-                --text: #ffffff;
-                --secondary: #48484a;
-            }
+            :root { --bg: #000000; --card: #1c1c1e; --text: #ffffff; --secondary: #48484a; }
         }
         body {
             font-family: -apple-system, system-ui, sans-serif;
@@ -46,8 +41,26 @@
             font-size: 12px;
             background: var(--secondary);
             color: white;
-            margin-top: 5px;
+            margin-bottom: 10px;
         }
+        .visualizer-container {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            height: 100px;
+            border: 1px solid var(--secondary);
+        }
+        canvas { width: 100%; height: 100%; }
+        
+        .gain-control {
+            background: var(--card);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .gain-info { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 8px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+
         .text-card {
             background: var(--card);
             border-radius: 16px;
@@ -59,7 +72,7 @@
         }
         #result-area {
             width: 100%;
-            height: 300px;
+            height: 250px;
             border: none;
             outline: none;
             background: transparent;
@@ -68,11 +81,7 @@
             line-height: 1.6;
             resize: none;
         }
-        .controls {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-        }
+        .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
         button {
             padding: 15px;
             border: none;
@@ -89,16 +98,26 @@
         #stop-btn { background: var(--danger); color: white; display: none; grid-column: span 2; }
         #copy-btn { background: var(--secondary); color: white; }
         #clear-btn { background: var(--secondary); color: white; opacity: 0.6; }
-        .info { font-size: 0.75rem; color: var(--secondary); text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div class="app-container">
     <div class="header">
-        <h1>High-Gain Recorder</h1>
+        <h1>Visual Transcriber</h1>
         <div id="status-badge">待機中</div>
-        <div class="info">高感度マイク設定済み / .mp4保存対応</div>
+    </div>
+
+    <div class="visualizer-container">
+        <canvas id="visualizer"></canvas>
+    </div>
+
+    <div class="gain-control">
+        <div class="gain-info">
+            <span>マイク感度 (Gain)</span>
+            <span id="gain-val">2.5x</span>
+        </div>
+        <input type="range" id="gain-slider" min="1" max="10" step="0.1" value="2.5">
     </div>
 
     <div class="text-card">
@@ -106,7 +125,7 @@
     </div>
 
     <div class="controls">
-        <button id="start-btn">🎙 録音開始（高感度）</button>
+        <button id="start-btn">🎙 録音開始</button>
         <button id="stop-btn">🛑 停止して保存</button>
         <button id="copy-btn">📋 コピー</button>
         <button id="clear-btn">🗑 消去</button>
@@ -119,16 +138,45 @@
     const statusBadge = document.getElementById('status-badge');
     const startBtn = document.getElementById('start-btn');
     const stopBtn = document.getElementById('stop-btn');
-    
-    let recognition;
-    let mediaRecorder;
-    let audioChunks = [];
-    let isRecording = false;
-    let finalTranscript = '';
-    let audioContext;
-    let streamSource;
-    let gainNode;
-    let destination;
+    const gainSlider = document.getElementById('gain-slider');
+    const gainValDisplay = document.getElementById('gain-val');
+    const canvas = document.getElementById('visualizer');
+    const canvasCtx = canvas.getContext('2d');
+
+    let recognition, mediaRecorder, audioChunks = [], isRecording = false, finalTranscript = '';
+    let audioContext, analyser, gainNode, animationId;
+
+    // ゲイン調整
+    gainSlider.oninput = () => {
+        const val = gainSlider.value;
+        gainValDisplay.innerText = val + "x";
+        if (gainNode) gainNode.gain.setTargetAtTime(val, audioContext.currentTime, 0.01);
+    };
+
+    const draw = () => {
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteTimeDomainData(dataArray);
+
+        canvasCtx.fillStyle = '#000';
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeStyle = '#007aff';
+        canvasCtx.beginPath();
+
+        const sliceWidth = canvas.width * 1.0 / bufferLength;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = v * canvas.height / 2;
+            if (i === 0) canvasCtx.moveTo(x, y);
+            else canvasCtx.lineTo(x, y);
+            x += sliceWidth;
+        }
+        canvasCtx.lineTo(canvas.width, canvas.height / 2);
+        canvasCtx.stroke();
+        animationId = requestAnimationFrame(draw);
+    };
 
     const initRecognition = () => {
         recognition = new SpeechRecognition();
@@ -147,85 +195,64 @@
         recognition.onend = () => { if (isRecording) recognition.start(); };
     };
 
-    async function startRecording() {
+    async function startAll() {
         try {
-            // マイク入力を取得（ノイズ抑制等をオン）
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { 
-                    echoCancellation: true, 
-                    noiseSuppression: true, 
-                    autoGainControl: true 
-                } 
-            });
-
-            // --- Web Audio API で小さい音を増幅 ---
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            streamSource = audioContext.createMediaStreamSource(stream);
+            const source = audioContext.createMediaStreamSource(stream);
+            
+            analyser = audioContext.createAnalyser();
             gainNode = audioContext.createGain();
+            gainNode.gain.value = gainSlider.value;
             
-            // ゲイン値を設定 (2.5倍に増幅)
-            gainNode.gain.value = 2.5; 
+            const destination = audioContext.createMediaStreamDestination();
             
-            // 録音用の宛先を作成
-            destination = audioContext.createMediaStreamDestination();
-            streamSource.connect(gainNode);
+            source.connect(gainNode);
+            gainNode.connect(analyser);
             gainNode.connect(destination);
-            // --------------------------------------
 
-            // iOS/Safariで最も汎用性の高いaudio/mp4形式を指定
             const mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/webm';
             mediaRecorder = new MediaRecorder(destination.stream, { mimeType });
-            
             audioChunks = [];
             mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
             mediaRecorder.onstop = () => {
-                if (confirm("音声データ(.mp4)を保存しますか？")) {
+                if (confirm("音声(.mp4)を保存しますか？")) {
                     const blob = new Blob(audioChunks, { type: mimeType });
-                    const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    const time = new Date().toLocaleTimeString().replace(/:/g, '-');
-                    a.href = url;
-                    a.download = `voice_note_${time}.mp4`;
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `voice_${Date.now()}.mp4`;
                     a.click();
                 }
                 stream.getTracks().forEach(t => t.stop());
                 audioContext.close();
+                cancelAnimationFrame(animationId);
             };
 
             if (!recognition) initRecognition();
             isRecording = true;
             recognition.start();
             mediaRecorder.start();
+            draw();
 
-            statusBadge.innerText = "高感度モード録音中";
+            statusBadge.innerText = "録音中";
             statusBadge.style.background = "#ff3b30";
             startBtn.style.display = 'none';
             stopBtn.style.display = 'flex';
-        } catch (err) {
-            alert("エラー: " + err);
-        }
+        } catch (err) { alert("エラー: " + err); }
     }
 
-    function stopRecording() {
+    startBtn.onclick = startAll;
+    stopBtn.onclick = () => {
         isRecording = false;
         recognition.stop();
         mediaRecorder.stop();
-        statusBadge.innerText = "待機中";
-        statusBadge.style.background = "#8e8e93";
         startBtn.style.display = 'flex';
         stopBtn.style.display = 'none';
-    }
-
-    startBtn.onclick = startRecording;
-    stopBtn.onclick = stopRecording;
-    document.getElementById('copy-btn').onclick = () => {
-        navigator.clipboard.writeText(resultArea.value);
-        alert("コピー完了");
+        statusBadge.innerText = "待機中";
+        statusBadge.style.background = "#8e8e93";
     };
-    document.getElementById('clear-btn').onclick = () => {
-        if(confirm("消去しますか？")) { finalTranscript = ''; resultArea.value = ''; }
-    };
+    document.getElementById('copy-btn').onclick = () => { navigator.clipboard.writeText(resultArea.value); alert("コピー完了"); };
+    document.getElementById('clear-btn').onclick = () => { if(confirm("消去？")) { finalTranscript = ''; resultArea.value = ''; } };
 </script>
-
 </body>
 </html>
